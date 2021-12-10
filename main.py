@@ -4,20 +4,16 @@ import numpy as np
 
 
 # 취약점 순위 높은거 선정하는 함수
-def vul_rank(input):
+def vul_rank(input, en = 5):
     # input : 프로그램 기능. 즉 label에 대한 데이터를(데이터프레임 형식의) 입력으로 주면 됨. ex) cal, mes, pay, res, cam
-    tmp = input.sort_values(by=['aver_score'], axis=0, ascending=False)
-    # print(tmp)
-    c = 0
-    for i in tmp['aver_score']:
-        if i == 10.0:
-            c += 1
-    print("c = ", c)
-    return tmp[:c]
+    tmp = input.sort_values(by=['AY_score'], axis=0, ascending=False)
+    tmp = tmp.drop_duplicates(['SV name'], keep='first')
+    # print(tmp[:en])
+    return tmp[:en]
 
 
 def recom_sys(score, data, vul):
-    # score : 최종적으로 사용할 점수 column 이름을 string 형식으로, 아직까지는 overall로 지정. 추후 점수 산정 방식이 변화하면 수정
+    # score : 최종적으로 사용할 점수 column 이름을 string 형식
     # data : 전체 데이터, 여기서는 result를 말함. DataFrame 구조로
     # vul : 취약점 string
     li_rating = data.pivot_table(score, index='label', columns='SV name')
@@ -39,10 +35,10 @@ def recom_sys(score, data, vul):
     coffey_hands = cveid_list.index(vul)
 
     corr_ch = corr[coffey_hands]
+    # print("print corr ch", corr_ch)
     corr_list = list(cveid[corr_ch >= 1])
 
     return corr_list
-
 
 
 # label 0 = 'calendar' |  1 = 'messenger' |  2 = 'payment_service' |  3 = 'reservation_service' |  4 = 'camera'
@@ -64,7 +60,6 @@ li = ['cal', 'mes', 'pay', 'res', 'cam']
 name_li = ['calendar', 'messenger', 'payment service', 'reservation service', 'camera']
 num = 0
 
-
 for n in range(5):
     aver_list = []
     for r in range(len(globals()['{}'.format(li[n])])):
@@ -83,8 +78,8 @@ result = pd.concat([result, pay], ignore_index=True)
 result = pd.concat([result, res], ignore_index=True)
 result = pd.concat([result, cam], ignore_index=True)
 
-print(result.shape)
-print(result.head(3))
+# print(result.shape)
+# print(result.head(3))
 # print(result.columns)
 
 # type 확인
@@ -117,26 +112,71 @@ for i in range(4):
 
     # print("str : ", str_c, " num : ", num_c, "float : ", flo_c, 'else type : ', elt)
 
-# == overall 대체 ====
-"""
-aver_list = []
-for r in range(len(result)):
-    tmp = result['exploitability'][r] + result['impact'][r] + result['base score'][r]
-    aver_list.append(tmp)
+# == 새로 추가 - 년도별 가중치 =========
+li2 = ['result', 'cal', 'mes', 'pay', 'res', 'cam']
+tmp_list = []
+for i in range(6):
+    tlist = []
+    for j in range(len(globals()['{}'.format(li2[i])])):
+        c = 0
+        test = globals()['{}'.format(li2[i])]['SV name'][j]
+        test = int(test[4:8])
+        score = (1-((2021 - test) * 0.01)) * globals()['{}'.format(li2[i])]['aver_score'][j]
+        tlist.append(score)
+    globals()['{}'.format(li2[i])].insert(6, 'AY_score', tlist)
 
-result.insert(6, 'aver_score', aver_list)
-"""
-# == 새로 추가될 부분 ==============
-
-tmp = vul_rank(cal)
-print(tmp[:1]['SV name'])
-vul_list = list(tmp['SV name'])
-print(vul_list)
 
 # == 새로 추가될 부분 ==============
+li = ['cal', 'mes', 'cam']
+for j in range(3): # cal, mes, cam etc..  // 지금은 cal 기능으로 테스트
+    tmp1 = vul_rank(globals()['{}'.format(li[j])])
+    vul_list = list(tmp1['SV name'])
+    for i in range(5): # vul list len -> 5
+        corr_list = recom_sys("AY_score", result, vul_list[i])
+        weight = 1 - (i * 0.005)
+        # print("len list : ", len(corr_list))
+        for k in range(len(corr_list)):
+            a = result.loc[result['SV name'] == corr_list[k]]
+            # df.at['Bob', 'age'] = 60
 
-corr_list = recom_sys("aver_score", result, vul_list[0])
-print(len(corr_list))
+            a.at[a.index.values[0], 'AY_score'] = a['AY_score'] * weight
+            if k == 0:
+                clist = a
+            else:
+                clist = pd.concat([clist, a])
+        if i == 0:
+            rlist = vul_rank(clist)
+        else:
+            rlist = pd.concat([rlist, vul_rank(clist)])
+
+# 최종
+    concat_list = pd.concat([tmp1, rlist])
+    result_list = vul_rank(concat_list, 10)
+    comp_list = vul_rank(globals()['{}'.format(li[j])], 10)
+    print("==============", li[j], "출력 ================\n\n")
+    print("result : \n", result_list)
+    print("비교 : \n", comp_list)
+    print("\n\n")
+    # 1. 상위권과의 차이점
+    test_list = pd.concat([comp_list, result_list])
+    print("원래 길이 : ", len(test_list))
+    test_list = test_list.drop_duplicates(['SV name'], keep=False)
+    print("겹치지 않는 길이 : ", len(test_list))
+
+    # 2. 해당 데이터베이스에 있는지 비교
+    count = 0
+
+    # df.date.isin(['07311954'])
+    na = list(result_list['SV name'])
+    t = globals()['{}'.format(li[j])]['SV name'].isin(na)
+    # print(t)
+    for l in range(len(t)):
+        if t[l] == True:
+            count = count + 1
+
+    print(len(result_list))
+    print(li[j], "의 겹치는 값",count)
+
 
 
 
@@ -162,3 +202,25 @@ print(len(corr_list))
 # 추가로 VV를 구할 때 겹치는 값도 확인해볼 것인데 저거 다 해결되면..
 # 참고로 cve id를 통해서 정보 가져오는 것 성공했음!! 코드는 별도로 존재하므로 따로 올려둘게
 
+# 추가할 것
+# 1. 점수에 데이터에서 해당 취약점이 발생하는 빈도에 따라 가중치 부여{5번 : 1, 4번 : 0.8, 3번 : 0.6, 2번 : 0.4, 1번 : 0.2}
+# 1-1. 가중치에 대한 그래프를 통해 최적의 가중치를 선정해도 괜찮을듯?
+# 1 --- 실패.. --- 전부 1개씩 존재함. 겹치지 않음.. 원래 이런건가..?
+# 해당 방식은 label의 개수가 많아야지 사용 가능할 것 같음
+
+# 2. 10 10 10 - 날짜 이용을 해서 구분
+# 2-1. 2021 : 1 | 2020 : 0.99 | ...
+
+# 3. VV에 대한 가중치 1순위 PV => 0.95, 2순위 PV => 0.9, 3순위 PV => 0.85, 4순위 PV => 0.8, 5순위 PV => 0.75
+
+# 4. 최종 결과에서 중복된 값 제거하기
+
+# 5. cal, mes, cam의 경우에는 최종 결과가 처음의 값과 완전히 똑같음.. 다른 두개는 개수가 적어서 그런지 오류가 발생하여서 일단 제외함.
+# 6. 가중치 차이가 너무 큰 것으로 추측하여 가중치를 전반적으로 키우기로 함
+
+# 궁금한 점(의아한 점)
+# 추천시스템이 원래 실행할 때마다 달라지는게 맞는건가?
+
+# 향후 계획 -> 해당 가중치를 딥러닝을 이용하여 학습 + 데이터셋을 더욱 방대하게 구축하여 많은 경우를 포함할 수 있도록함 + 추가로 프로그램 기능들 끼리의 유사성도 체크(현재 그 부분까지는 진행하지 못하였음)
+# 여기에 위에서 중복되는 값을 그냥 제거했는데 추가적으로 값을 더해주는 방식으로 진행해도 될 것 같음
+# 현재 중복되는 값에 값을 추가하지 못한 이유는 중복된 이유를 명확하게 확인하지 못하였기 때문..
